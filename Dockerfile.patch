@@ -1,0 +1,40 @@
+# Stage 1: Backend build
+FROM mcr.microsoft.com/dotnet/sdk:6.0 AS backend
+WORKDIR /src
+COPY . .
+RUN bash build.sh --backend
+
+# Stage 2: Frontend build
+FROM node:20-alpine AS frontend
+WORKDIR /src
+COPY . .
+RUN yarn install --frozen-lockfile --network-timeout 120000
+RUN yarn build --env production
+
+# Stage 3: Runtime
+FROM ghcr.io/linuxserver/baseimage-alpine:3.21
+
+ARG METADATA_URL=https://hardcover.bookinfo.pro
+ARG HARDCOVER=true
+
+ENV XDG_CONFIG_HOME="/config/xdg" \
+    COMPlus_EnableDiagnostics=0 \
+    TMPDIR=/run/readarr-temp \
+    METADATA_URL=${METADATA_URL} \
+    HARDCOVER=${HARDCOVER}
+
+RUN apk add -U --upgrade --no-cache \
+    icu-libs \
+    sqlite-libs \
+    xmlstarlet
+
+RUN mkdir -p /app/readarr/bin
+
+COPY --from=backend /src/_output/net6.0/linux-musl-x64/publish/ /app/readarr/bin/
+COPY --from=frontend /src/_output/UI/ /app/readarr/bin/UI/
+COPY docker/root/ /
+
+RUN echo -e "UpdateMethod=docker\nBranch=patched\nPackageVersion=patched\nPackageAuthor=pennydreadful" > /app/readarr/package_info
+
+EXPOSE 8787
+VOLUME /config
