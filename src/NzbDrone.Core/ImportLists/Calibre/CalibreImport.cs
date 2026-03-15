@@ -81,6 +81,11 @@ namespace NzbDrone.Core.ImportLists.Calibre
                             {
                                 item.BookGoodreadsId = goodreadsId;
                             }
+
+                            if (book.Identifiers.TryGetValue("hardcover-edition", out var editionId))
+                            {
+                                item.EditionGoodreadsId = editionId;
+                            }
                         }
 
                         result.Add(item);
