@@ -50,7 +50,14 @@ namespace NzbDrone.Core.Books
             var dbBook = _bookService.FindById(book.ForeignBookId);
             if (dbBook != null)
             {
+                var shouldMonitor = book.Monitored;
                 book.UseDbFieldsFrom(dbBook);
+
+                // Preserve caller's monitored state (e.g. from import lists)
+                if (shouldMonitor && !book.Monitored)
+                {
+                    book.Monitored = true;
+                }
             }
 
             // Remove any import list exclusions preventing addition

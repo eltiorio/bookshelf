@@ -136,3 +136,62 @@ This matches the resilience pattern already used in `FetchAndParseImportListServ
 - Subsumes the `BookNotFoundException` fix (per-item catch handles all exception types)
 - TODO: File issue on `pennydreadful/bookshelf`
 - TODO: Submit PR to upstream
+
+---
+
+## Import List books that already exist in DB lose their monitored state
+
+**Affects:** `pennydreadful/bookshelf` (upstream) — not specific to any fork or import list plugin
+
+**Severity:** High — import list `shouldMonitor: specificBook` is silently ignored for most books
+
+### Problem
+
+When an Import List adds a book that already exists in Bookshelf's database (e.g. the author was added via file scan and their full catalog was pulled from metadata), the book's `Monitored = true` flag set by the import list is overwritten to `false` by `AddBookService.AddBook()`.
+
+This means books from the import list are added but NOT monitored, so they never appear in Wanted/Missing and are never searched for download. Only books whose author was completely new to Bookshelf get correctly monitored.
+
+### Observed Impact
+
+369 empty Calibre entries processed by Import List → only 23 ended up monitored+missing. The ~300 that mapped to authors already in Bookshelf (from file scan) were silently de-monitored.
+
+### Root Cause
+
+`AddBookService.AddBook()` at line 50-54 of `src/NzbDrone.Core/Books/Services/AddBookService.cs`:
+
+```csharp
+var dbBook = _bookService.FindById(book.ForeignBookId);
+if (dbBook != null)
+{
+    book.UseDbFieldsFrom(dbBook);  // <-- overwrites Monitored
+}
+```
+
+`Book.UseDbFieldsFrom()` at line 87-97 of `src/NzbDrone.Core/Books/Model/Book.cs`:
+
+```csharp
+public override void UseDbFieldsFrom(Book other)
+{
+    Id = other.Id;
+    AuthorMetadataId = other.AuthorMetadataId;
+    Monitored = other.Monitored;  // <-- Monitored from DB (false) overwrites import list's true
+    ...
+}
+```
+
+The book already exists in the DB as unmonitored (part of the author's catalog pulled during metadata refresh). `UseDbFieldsFrom` copies the DB's `Monitored = false` over the import list's `Monitored = true`.
+
+Note: `ImportListSyncService.ProcessListItems()` has a separate "Book Exists in DB" path (line ~261) that correctly handles monitoring for existing books. But that path uses `_bookService.FindById(report.BookGoodreadsId)` where the ID may have been remapped by `MapBookReport`, causing a miss. The book then falls through to the "add new" path in `ProcessBookReport`, which hits the `UseDbFieldsFrom` override.
+
+### Fix (TBD)
+
+Options:
+1. In `AddBookService.AddBook()`, preserve the caller's `Monitored` state after `UseDbFieldsFrom`
+2. In `ProcessBookReport`, after `_addBookService.AddBooks()`, explicitly set monitoring on the added books
+3. In `ProcessListItems`, use the "Book Exists" path more reliably by checking both the original and mapped IDs
+
+### Status
+
+- Under investigation in our fork
+- TODO: Determine best fix approach
+- TODO: File issue on `pennydreadful/bookshelf`
