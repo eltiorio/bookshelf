@@ -194,11 +194,19 @@ namespace NzbDrone.Core.ImportLists
             }
             else if (report.BookGoodreadsId.IsNotNullOrWhiteSpace())
             {
-                var mappedBook = _bookInfoProxy.GetBookInfo(report.BookGoodreadsId);
+                try
+                {
+                    var mappedBook = _bookInfoProxy.GetBookInfo(report.BookGoodreadsId);
 
-                report.BookGoodreadsId = mappedBook.Item2.ForeignBookId;
-                report.Book = mappedBook.Item2.Title;
-                report.AuthorGoodreadsId = mappedBook.Item3.First().ForeignAuthorId;
+                    report.BookGoodreadsId = mappedBook.Item2.ForeignBookId;
+                    report.Book = mappedBook.Item2.Title;
+                    report.AuthorGoodreadsId = mappedBook.Item3.First().ForeignAuthorId;
+                }
+                catch (BookNotFoundException)
+                {
+                    _logger.Debug($"Nothing found for book [{report.BookGoodreadsId}]");
+                    report.BookGoodreadsId = null;
+                }
             }
             else
             {
