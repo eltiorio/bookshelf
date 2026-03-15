@@ -147,6 +147,41 @@ namespace NzbDrone.Core.ImportLists
             var addedAuthors = _addAuthorService.AddAuthors(authorsToAdd, false);
             var addedBooks = _addBookService.AddBooks(booksToAdd, false);
 
+            // Post-add: explicitly monitor specific books from import lists.
+            // AddAuthorService pulls the full author catalog with default monitoring,
+            // which can override the import list's per-book monitoring intent.
+            var monitoredCount = 0;
+            foreach (var report in items)
+            {
+                if (report.BookGoodreadsId.IsNullOrWhiteSpace())
+                {
+                    continue;
+                }
+
+                var importList = _importListFactory.Get(report.ImportListId);
+                if (importList.ShouldMonitor == ImportListMonitorType.None)
+                {
+                    continue;
+                }
+
+                var dbBook = _bookService.FindById(report.BookGoodreadsId);
+                if (dbBook != null && !dbBook.Monitored)
+                {
+                    _bookService.SetBookMonitored(dbBook.Id, true);
+                    monitoredCount++;
+
+                    if (importList.ShouldSearch)
+                    {
+                        _commandQueueManager.Push(new BookSearchCommand(new List<int> { dbBook.Id }));
+                    }
+                }
+            }
+
+            if (monitoredCount > 0)
+            {
+                _logger.ProgressInfo("Import List Sync: Set {0} books to monitored", monitoredCount);
+            }
+
             var message = string.Format($"Import List Sync Completed. Items found: {items.Count}, Authors added: {authorsToAdd.Count}, Books added: {booksToAdd.Count}");
 
             _logger.ProgressInfo(message);
