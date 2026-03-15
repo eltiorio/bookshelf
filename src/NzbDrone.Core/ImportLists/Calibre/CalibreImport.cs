@@ -73,7 +73,11 @@ namespace NzbDrone.Core.ImportLists.Calibre
 
                         if (book.Identifiers != null)
                         {
-                            if (book.Identifiers.TryGetValue("goodreads", out var goodreadsId))
+                            if (book.Identifiers.TryGetValue("hardcover-id", out var hardcoverId))
+                            {
+                                item.BookGoodreadsId = hardcoverId;
+                            }
+                            else if (book.Identifiers.TryGetValue("goodreads", out var goodreadsId))
                             {
                                 item.BookGoodreadsId = goodreadsId;
                             }
