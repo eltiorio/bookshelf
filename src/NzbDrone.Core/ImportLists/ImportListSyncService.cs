@@ -115,25 +115,32 @@ namespace NzbDrone.Core.ImportLists
 
                 reportNumber++;
 
-                var importList = _importListFactory.Get(report.ImportListId);
-
-                if (report.Book.IsNotNullOrWhiteSpace() || report.EditionGoodreadsId.IsNotNullOrWhiteSpace())
+                try
                 {
-                    if (report.EditionGoodreadsId.IsNullOrWhiteSpace() || report.AuthorGoodreadsId.IsNullOrWhiteSpace() || report.BookGoodreadsId.IsNullOrWhiteSpace())
-                    {
-                        MapBookReport(report);
-                    }
+                    var importList = _importListFactory.Get(report.ImportListId);
 
-                    ProcessBookReport(importList, report, listExclusions, booksToAdd, authorsToAdd);
+                    if (report.Book.IsNotNullOrWhiteSpace() || report.EditionGoodreadsId.IsNotNullOrWhiteSpace())
+                    {
+                        if (report.EditionGoodreadsId.IsNullOrWhiteSpace() || report.AuthorGoodreadsId.IsNullOrWhiteSpace() || report.BookGoodreadsId.IsNullOrWhiteSpace())
+                        {
+                            MapBookReport(report);
+                        }
+
+                        ProcessBookReport(importList, report, listExclusions, booksToAdd, authorsToAdd);
+                    }
+                    else if (report.Author.IsNotNullOrWhiteSpace() || report.AuthorGoodreadsId.IsNotNullOrWhiteSpace())
+                    {
+                        if (report.AuthorGoodreadsId.IsNullOrWhiteSpace())
+                        {
+                            MapAuthorReport(report);
+                        }
+
+                        ProcessAuthorReport(importList, report, listExclusions, authorsToAdd);
+                    }
                 }
-                else if (report.Author.IsNotNullOrWhiteSpace() || report.AuthorGoodreadsId.IsNotNullOrWhiteSpace())
+                catch (System.Exception e)
                 {
-                    if (report.AuthorGoodreadsId.IsNullOrWhiteSpace())
-                    {
-                        MapAuthorReport(report);
-                    }
-
-                    ProcessAuthorReport(importList, report, listExclusions, authorsToAdd);
+                    _logger.Error(e, "Failed to process import list item {0} [{1}] by [{2}], skipping", report.BookGoodreadsId, report.Book, report.Author);
                 }
             }
 
