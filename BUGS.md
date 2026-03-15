@@ -192,6 +192,96 @@ Options:
 
 ### Status
 
-- Under investigation in our fork
-- TODO: Determine best fix approach
+- Partially addressed: `AddBookService` preserves caller's Monitored flag (commit 23a2f9c0b)
+- Partially addressed: post-add monitoring loop in `ProcessListItems` (commit 078bfefdc)
+- Full fix blocked by metadata polling hang (see below) — AddBooks fails before the post-add loop can run
 - TODO: File issue on `pennydreadful/bookshelf`
+
+---
+
+## Metadata API polling loop causes multi-hour hangs during batch operations
+
+**Affects:** `pennydreadful/bookshelf` (upstream) — any operation that adds multiple authors
+
+**Severity:** Critical — import list sync, bulk author adds, and library refreshes can hang for hours
+
+### Problem
+
+`BookInfoProxy.PollAuthorUncached()` and `PollBook()` use a polling loop that retries up to **60 times** with sleeps between each attempt. When processing hundreds of authors in a batch (e.g. import list sync), the cumulative sleep time can reach hours, causing the sync to appear hung.
+
+### Root Cause
+
+In `src/NzbDrone.Core/MetadataSource/BookInfo/BookInfoProxy.cs`:
+
+**`PollAuthorUncached()` (line ~599):**
+```csharp
+for (var i = 0; i < 60; i++)
+{
+    var httpResponse = _cachedHttpClient.Get(httpRequest, false, TimeSpan.FromMinutes(30));
+
+    if (httpResponse.HasHttpError)
+    {
+        if (httpResponse.StatusCode == HttpStatusCode.TooManyRequests)
+        {
+            WaitUntilRetry(httpResponse);  // Thread.Sleep(Retry-After seconds, default 5s)
+            continue;
+        }
+        // ... other error handling
+    }
+
+    resource = JsonSerializer.Deserialize<AuthorResource>(httpResponse.Content);
+
+    if (resource.Works != null)
+    {
+        break;  // success
+    }
+
+    Thread.Sleep(2000);  // works not ready yet, poll again
+}
+```
+
+Three compounding factors:
+
+1. **Polling sleep:** Even on success, if `Works` is null (metadata server still processing), it sleeps 2s and retries. 60 iterations x 2s = **120s per author**.
+
+2. **Rate limit sleep:** On 429, `WaitUntilRetry()` calls `Thread.Sleep(Retry-After)` (default 5s, but server can set any value). 60 retries x 5s = **300s per author**. If `Retry-After` is longer (e.g. 60s), it's 60 x 60s = **3600s (1 hour) per author**.
+
+3. **No overall timeout:** The loop has no total elapsed time check. It will always run up to 60 iterations regardless of how long each iteration takes.
+
+**`PollBook()` (line ~655):** Same pattern, same problem.
+
+### Observed Impact
+
+Import list sync with 369 items → ~170 new authors to add. Each author triggers `PollAuthorUncached`. With rate limiting from the Hardcover metadata API:
+
+- Last observed hang: 7+ hours on a single sync, stuck on `GetAuthorDetails`
+- Previous hang: sync stuck for 15+ minutes on `Processing list item 369/369`
+- Pattern: sync processes items quickly, then hangs indefinitely during `AddAuthors` phase
+
+### Fix Options
+
+**Option A: Add overall timeout to polling loop**
+Replace the fixed 60-iteration loop with a time-bounded loop (e.g. 60s total per author). If the metadata server can't provide Works within 60s, skip the author.
+
+```csharp
+var deadline = DateTime.UtcNow.AddSeconds(60);
+while (DateTime.UtcNow < deadline)
+{
+    // ... existing poll logic ...
+}
+```
+
+**Option B: Reduce retry count and sleep duration**
+Lower from 60 to 10 iterations, cap `Retry-After` sleep at 10s. Reduces worst case from hours to minutes.
+
+**Option C: Async polling with cancellation**
+Replace `Thread.Sleep` with `Task.Delay(timeout, cancellationToken)` so the operation can be cancelled by the caller. Requires making `PollAuthorUncached` async.
+
+**Recommendation:** Option A is the simplest and most effective. It bounds the worst case regardless of server behavior. Options B and C are complementary improvements.
+
+### Status
+
+- Root cause identified
+- TODO: Implement fix
+- TODO: File issue on `pennydreadful/bookshelf`
+- TODO: Submit PR to upstream
