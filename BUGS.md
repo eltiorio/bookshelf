@@ -281,7 +281,9 @@ Replace `Thread.Sleep` with `Task.Delay(timeout, cancellationToken)` so the oper
 
 ### Status
 
-- Root cause identified
-- TODO: Implement fix
+- Fixed in our fork: `eltiorio/bookshelf` branch `feature/calibre-import-list`
+  - `PollAuthorUncached`: replaced `for (i < 60)` with `while (UtcNow < deadline)` (60s)
+  - `PollBook`: same change
+  - `WaitUntilRetry`: capped `Retry-After` at 30s via `Math.Min(seconds, 30)`
 - TODO: File issue on `pennydreadful/bookshelf`
 - TODO: Submit PR to upstream

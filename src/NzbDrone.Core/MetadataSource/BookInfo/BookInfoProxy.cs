@@ -600,7 +600,8 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
         {
             AuthorResource resource = null;
 
-            for (var i = 0; i < 60; i++)
+            var deadline = DateTime.UtcNow.AddSeconds(60);
+            while (DateTime.UtcNow < deadline)
             {
                 var httpRequest = _requestBuilder.GetRequestBuilder().Create()
                     .SetSegment("route", $"author/{foreignAuthorId}")
@@ -656,7 +657,8 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
         {
             WorkResource resource = null;
 
-            for (var i = 0; i < 60; i++)
+            var deadline = DateTime.UtcNow.AddSeconds(60);
+            while (DateTime.UtcNow < deadline)
             {
                 var httpRequest = _requestBuilder.GetRequestBuilder().Create()
                     .SetSegment("route", $"work/{foreignBookId}")
@@ -755,6 +757,9 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     seconds = 5;
                 }
             }
+
+            // Cap Retry-After to prevent a single 429 from consuming the entire poll deadline
+            seconds = Math.Min(seconds, 30);
 
             _logger.Info("BookInfo returned 429, backing off for {0}s", seconds);
 
