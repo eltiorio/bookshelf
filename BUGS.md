@@ -1,0 +1,73 @@
+# Known Bugs
+
+## BookNotFoundException crashes entire Import List Sync
+
+**Affects:** `pennydreadful/bookshelf` (upstream) — not specific to any fork or import list plugin
+
+**Severity:** High — one bad book ID aborts sync for all remaining items
+
+### Problem
+
+`ImportListSyncService.MapBookReport()` does not catch `BookNotFoundException` when looking up a book by ID. If any import list item has a `BookGoodreadsId` that references a book deleted from the metadata server, the exception propagates up and kills the entire `ImportListSync` command. No further items are processed.
+
+### Reproduction
+
+1. Configure any import list that provides `BookGoodreadsId` values (e.g., Hardcover Import List)
+2. Have at least one item where the book ID no longer exists on the metadata server
+3. Trigger Import List Sync
+4. Sync aborts with: `BookNotFoundException: Book with id XXXXX was not found, it may have been removed from metadata server.`
+
+### Root Cause
+
+In `src/NzbDrone.Core/ImportLists/ImportListSyncService.cs`, the edition ID lookup path (line ~178) has a try/catch for `BookNotFoundException`, but the book ID lookup path (line ~197) does not:
+
+```csharp
+// Edition path — has try/catch (correct)
+if (report.EditionGoodreadsId.IsNotNullOrWhiteSpace() && int.TryParse(...))
+{
+    try
+    {
+        var remoteBook = _goodreadsProxy.GetBookInfo(report.EditionGoodreadsId);
+        // ...
+    }
+    catch (BookNotFoundException)
+    {
+        _logger.Debug($"Nothing found for edition [{report.EditionGoodreadsId}]");
+        report.EditionGoodreadsId = null;
+    }
+}
+// Book ID path — NO try/catch (bug)
+else if (report.BookGoodreadsId.IsNotNullOrWhiteSpace())
+{
+    var mappedBook = _bookInfoProxy.GetBookInfo(report.BookGoodreadsId); // throws!
+    // ...
+}
+```
+
+### Fix
+
+Wrap the book ID lookup in the same try/catch pattern as the edition path:
+
+```csharp
+else if (report.BookGoodreadsId.IsNotNullOrWhiteSpace())
+{
+    try
+    {
+        var mappedBook = _bookInfoProxy.GetBookInfo(report.BookGoodreadsId);
+        report.BookGoodreadsId = mappedBook.Item2.ForeignBookId;
+        report.Book = mappedBook.Item2.Title;
+        report.AuthorGoodreadsId = mappedBook.Item3.First().ForeignAuthorId;
+    }
+    catch (BookNotFoundException)
+    {
+        _logger.Debug($"Nothing found for book [{report.BookGoodreadsId}]");
+        report.BookGoodreadsId = null;
+    }
+}
+```
+
+### Status
+
+- Fixed in our fork: `eltiorio/bookshelf` branch `feature/calibre-import-list` (commit fde32d9e6)
+- TODO: File issue on `pennydreadful/bookshelf`
+- TODO: Submit PR to upstream
