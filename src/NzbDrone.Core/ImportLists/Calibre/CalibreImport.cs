@@ -82,10 +82,12 @@ namespace NzbDrone.Core.ImportLists.Calibre
                                 item.BookGoodreadsId = goodreadsId;
                             }
 
-                            if (book.Identifiers.TryGetValue("hardcover-edition", out var editionId))
-                            {
-                                item.EditionGoodreadsId = editionId;
-                            }
+                            // NOTE: Do NOT pass hardcover-edition as EditionGoodreadsId.
+                            // MapBookReport's edition path uses _goodreadsProxy.GetBookInfo()
+                            // which doesn't recognize Hardcover edition IDs, and because it's
+                            // an if/else-if with the book ID path, a failed edition lookup
+                            // prevents the book ID path from running — leaving AuthorGoodreadsId
+                            // unset. The Hardcover Import List also omits EditionGoodreadsId.
                         }
 
                         result.Add(item);

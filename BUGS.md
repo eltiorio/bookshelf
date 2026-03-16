@@ -359,25 +359,29 @@ These are known authors (e.g. Bill Bryson, Isaac Asimov, Agatha Christie) whose 
 - `GetBookInfo("427677")` succeeds, returns `AuthorGoodreadsId = "3050980"`
 - `GetAuthorInfo("3050980")` fails with `AuthorNotFoundException`
 
-### Investigation Findings
+### Root Cause Found
 
-**The failing author IDs don't match what Bookshelf has in its DB:**
+**Passing `EditionGoodreadsId` blocked the book ID lookup path.**
 
-| Author | ID from GetBookInfo (fails) | ID in Bookshelf DB (works) |
-|--------|---------------------------|---------------------------|
-| Bill Bryson | 3050980 | 60210 |
-| Alton Brown | 41121 | 238429 |
-| Isaac Asimov | 5763329 | 224110 |
+`MapBookReport` uses an `if/else if` structure:
+- If `EditionGoodreadsId` is set → edition path runs via `_goodreadsProxy.GetBookInfo()`
+- Else if `BookGoodreadsId` is set → book ID path runs via `_bookInfoProxy.GetBookInfo()`
 
-**The `hardcover-id` in Calibre is a Hardcover native `book_id`** (from the GraphQL API, written by Calibre-Hardcover Sync plugin). Bookshelf's metadata proxy (`hardcover.bookinfo.pro`) may use a different internal ID space.
+We passed both. The edition path ran first, failed ("Nothing found for edition" — the `basic_book_data` endpoint doesn't recognize Hardcover edition IDs), set `EditionGoodreadsId = null`, and returned. The book ID path **never executed** because it's in the `else if`. Result: `AuthorGoodreadsId` was never set.
 
-**Book lookup via Bookshelf API also fails:** `author/lookup?term=readarr:3050980` returns empty. But `author/lookup?term=Bill+Bryson` returns the author with `foreignAuthorId=60210`.
+`ProcessBookReport` then ran with no author ID → skipped author processing → book added with no author → `AddBookService` crashed.
 
-**The Hardcover Import List uses the same Hardcover native IDs** (`HardcoverImportParser.cs` gets `id` from GraphQL response). If those IDs don't work with `bookinfo.pro`, the Hardcover Import List would have the same problem — but it may not have been tested at this scale.
+The Hardcover Import List does NOT pass `EditionGoodreadsId` — it only passes `BookGoodreadsId` and `AuthorGoodreadsId`. This allows `MapBookReport` to skip entirely (both IDs already set).
 
-### Remaining Questions
+**The "ID mismatch" hypothesis was wrong.** The Hardcover native IDs are likely fine — the book ID path would have worked if it had been allowed to run. The author failures were a downstream consequence of the edition path blocking the book ID path.
 
-- [ ] Does `hardcover.bookinfo.pro` use Hardcover native IDs or its own internal IDs?
-- [ ] When the Hardcover Import List adds an author successfully, what ID does it use?
-- [ ] Is the `GetBookInfo("427677")` call actually succeeding (returning author ID 3050980), or is our code falling through to the fuzzy search path which assigns a different ID?
-- [ ] Add debug logging to trace the full ID flow: Calibre hardcover-id → MapBookReport → GetBookInfo → returned AuthorGoodreadsId → AddAuthorService → GetAuthorInfo
+### Fix
+
+Remove `EditionGoodreadsId` from `CalibreImport.Fetch()`. Match the Hardcover Import List pattern: pass only `BookGoodreadsId`.
+
+### Status
+
+- Fixed in our fork: removed `hardcover-edition` pass-through from `CalibreImport.cs`
+- Previous "ID mismatch" hypothesis was incorrect — IDs are in the same space
+- The author import failures should be significantly reduced after this fix
+- TODO: Verify with a sync test
