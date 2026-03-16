@@ -87,8 +87,14 @@ namespace NzbDrone.Core.Books
             authorsToAdd.ForEach(x => x.AuthorMetadataId = x.Metadata.Value.Id);
 
             // Deduplicate by AuthorMetadataId — multiple import list items can resolve to the
-            // same author after metadata lookup, causing UNIQUE constraint violations on insert
+            // same author after metadata lookup, causing UNIQUE constraint violations on insert.
+            // Also filter out authors that already exist in the DB from previous syncs.
+            var existingAuthorIds = _authorService.GetAllAuthors()
+                .Select(x => x.AuthorMetadataId)
+                .ToHashSet();
+
             authorsToAdd = authorsToAdd
+                .Where(x => !existingAuthorIds.Contains(x.AuthorMetadataId))
                 .GroupBy(x => x.AuthorMetadataId)
                 .Select(g => g.First())
                 .ToList();

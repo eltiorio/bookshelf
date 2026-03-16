@@ -327,7 +327,9 @@ return _authorService.AddAuthors(authorsToAdd, doRefresh);
 
 ### Fix
 
-Deduplicate `authorsToAdd` by `AuthorMetadataId` after the metadata upsert (which assigns the IDs) and before the author insert.
+After the metadata upsert (which assigns IDs), before the author insert:
+1. Filter out authors whose `AuthorMetadataId` already exists in the DB (from previous syncs)
+2. Deduplicate remaining by `AuthorMetadataId` (within-batch duplicates)
 
 ### Status
 
