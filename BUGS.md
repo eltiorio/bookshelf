@@ -287,3 +287,50 @@ Replace `Thread.Sleep` with `Task.Delay(timeout, cancellationToken)` so the oper
   - `WaitUntilRetry`: capped `Retry-After` at 30s via `Math.Min(seconds, 30)`
 - TODO: File issue on `pennydreadful/bookshelf`
 - TODO: Submit PR to upstream
+
+---
+
+## Duplicate AuthorMetadataId crashes AddAuthors batch insert
+
+**Affects:** `pennydreadful/bookshelf` (upstream) — any batch author add (import lists, bulk operations)
+
+**Severity:** High — crashes the entire import list sync after spending minutes on metadata lookups
+
+### Problem
+
+`AddAuthorService.AddAuthors()` batch-inserts authors into the DB. Multiple import list items can resolve to the same author after metadata lookup (e.g. different books by the same author, or different Hardcover author IDs mapping to the same canonical author). The batch insert hits a `UNIQUE constraint failed: Authors.AuthorMetadataId` and crashes.
+
+### Observed Error
+
+```
+System.Data.SQLite.SQLiteException: constraint failed
+UNIQUE constraint failed: Authors.AuthorMetadataId
+   at AddAuthorService.AddAuthors()
+```
+
+### Root Cause
+
+In `src/NzbDrone.Core/Books/Services/AddAuthorService.cs` line ~89:
+
+```csharp
+// add metadata — UpsertMany handles duplicates correctly
+_authorMetadataService.UpsertMany(authorsToAdd.Select(x => x.Metadata.Value).ToList());
+authorsToAdd.ForEach(x => x.AuthorMetadataId = x.Metadata.Value.Id);
+
+// batch insert — does NOT handle duplicates, crashes on UNIQUE constraint
+return _authorService.AddAuthors(authorsToAdd, doRefresh);
+```
+
+`UpsertMany` handles duplicate metadata correctly (upsert). But `AddAuthors` does a plain INSERT, so two authors with the same `AuthorMetadataId` cause a constraint violation.
+
+`ImportListSyncService.ProcessAuthorReport()` tries to prevent duplicates via `authorsToAdd.Find(i => i.ForeignAuthorId == report.AuthorGoodreadsId)`, but different `ForeignAuthorId` values can resolve to the same canonical author after `AddSkyhookData`.
+
+### Fix
+
+Deduplicate `authorsToAdd` by `AuthorMetadataId` after the metadata upsert (which assigns the IDs) and before the author insert.
+
+### Status
+
+- Fixed in our fork: `eltiorio/bookshelf` branch `feature/calibre-import-list`
+- TODO: File issue on `pennydreadful/bookshelf`
+- TODO: Submit PR to upstream

@@ -86,6 +86,13 @@ namespace NzbDrone.Core.Books
             _authorMetadataService.UpsertMany(authorsToAdd.Select(x => x.Metadata.Value).ToList());
             authorsToAdd.ForEach(x => x.AuthorMetadataId = x.Metadata.Value.Id);
 
+            // Deduplicate by AuthorMetadataId — multiple import list items can resolve to the
+            // same author after metadata lookup, causing UNIQUE constraint violations on insert
+            authorsToAdd = authorsToAdd
+                .GroupBy(x => x.AuthorMetadataId)
+                .Select(g => g.First())
+                .ToList();
+
             return _authorService.AddAuthors(authorsToAdd, doRefresh);
         }
 
