@@ -243,6 +243,14 @@ namespace NzbDrone.Core.ImportLists
                     report.BookGoodreadsId = mappedBook.Item2.ForeignBookId;
                     report.Book = mappedBook.Item2.Title;
                     report.AuthorGoodreadsId = mappedBook.Item3.First().ForeignAuthorId;
+
+                    // Set edition so ProcessBookReport can create a monitored edition
+                    // for AddBookService.AddSkyhookData (requires at least one)
+                    var edition = mappedBook.Item2.Editions?.Value?.FirstOrDefault();
+                    if (edition != null && report.EditionGoodreadsId.IsNullOrWhiteSpace())
+                    {
+                        report.EditionGoodreadsId = edition.ForeignEditionId;
+                    }
                 }
                 catch (BookNotFoundException)
                 {
