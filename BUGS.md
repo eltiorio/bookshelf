@@ -359,16 +359,25 @@ These are known authors (e.g. Bill Bryson, Isaac Asimov, Agatha Christie) whose 
 - `GetBookInfo("427677")` succeeds, returns `AuthorGoodreadsId = "3050980"`
 - `GetAuthorInfo("3050980")` fails with `AuthorNotFoundException`
 
-### Hypotheses (not verified)
+### Investigation Findings
 
-1. **Hardcover metadata server inconsistency** — book endpoint returns an author ID that the author endpoint doesn't recognize. Would need to test the metadata API directly to confirm.
-2. **ID mapping issue** — `GetBookInfo` returns an author ID in a format that `GetAuthorInfo` doesn't accept (e.g. different ID type, stale mapping).
-3. **Rate limiting / transient errors** — the author endpoint might be returning errors that get misinterpreted as "not found". Need to check the actual HTTP response.
-4. **60s polling deadline** — our timeout fix could be causing `PollAuthorUncached` to bail early and throw `BookInfoException("Failed to get works")`, which might be caught differently upstream and surface as `AuthorNotFoundException`.
+**The failing author IDs don't match what Bookshelf has in its DB:**
 
-### Next Steps
+| Author | ID from GetBookInfo (fails) | ID in Bookshelf DB (works) |
+|--------|---------------------------|---------------------------|
+| Bill Bryson | 3050980 | 60210 |
+| Alton Brown | 41121 | 238429 |
+| Isaac Asimov | 5763329 | 224110 |
 
-- [ ] Test the metadata API directly: `curl https://hardcover.bookinfo.pro/author/3050980` — does it return data or 404?
-- [ ] Add debug logging in `PollAuthorUncached` to capture the actual HTTP status and response for failing authors
-- [ ] Check if these same authors work when added manually via Bookshelf UI (not through import list)
-- [ ] Check if the polling deadline is causing premature failures vs actual 404s
+**The `hardcover-id` in Calibre is a Hardcover native `book_id`** (from the GraphQL API, written by Calibre-Hardcover Sync plugin). Bookshelf's metadata proxy (`hardcover.bookinfo.pro`) may use a different internal ID space.
+
+**Book lookup via Bookshelf API also fails:** `author/lookup?term=readarr:3050980` returns empty. But `author/lookup?term=Bill+Bryson` returns the author with `foreignAuthorId=60210`.
+
+**The Hardcover Import List uses the same Hardcover native IDs** (`HardcoverImportParser.cs` gets `id` from GraphQL response). If those IDs don't work with `bookinfo.pro`, the Hardcover Import List would have the same problem — but it may not have been tested at this scale.
+
+### Remaining Questions
+
+- [ ] Does `hardcover.bookinfo.pro` use Hardcover native IDs or its own internal IDs?
+- [ ] When the Hardcover Import List adds an author successfully, what ID does it use?
+- [ ] Is the `GetBookInfo("427677")` call actually succeeding (returning author ID 3050980), or is our code falling through to the fuzzy search path which assigns a different ID?
+- [ ] Add debug logging to trace the full ID flow: Calibre hardcover-id → MapBookReport → GetBookInfo → returned AuthorGoodreadsId → AddAuthorService → GetAuthorInfo
