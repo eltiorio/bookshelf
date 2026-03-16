@@ -336,3 +336,39 @@ After the metadata upsert (which assigns IDs), before the author insert:
 - Fixed in our fork: `eltiorio/bookshelf` branch `feature/calibre-import-list`
 - TODO: File issue on `pennydreadful/bookshelf`
 - TODO: Submit PR to upstream
+
+---
+
+## OPEN: Many authors fail to import during Import List Sync
+
+**Status:** Under investigation — root cause NOT confirmed
+
+### Observed Behavior
+
+During import list sync, many `AddAuthorService` calls fail with:
+```
+ReadarrId XXXXXXX was not found, it may have been removed from Goodreads.
+Failed to import id: XXXXXXX - [Author Name]
+```
+
+These are known authors (e.g. Bill Bryson, Isaac Asimov, Agatha Christie) whose books resolve successfully via `GetBookInfo()` — the book endpoint returns an author ID, but then `GetAuthorInfo()` with that same author ID fails.
+
+### Example
+
+- Calibre entry: "The Body" by Bill Bryson, `hardcover-id: 427677`
+- `GetBookInfo("427677")` succeeds, returns `AuthorGoodreadsId = "3050980"`
+- `GetAuthorInfo("3050980")` fails with `AuthorNotFoundException`
+
+### Hypotheses (not verified)
+
+1. **Hardcover metadata server inconsistency** — book endpoint returns an author ID that the author endpoint doesn't recognize. Would need to test the metadata API directly to confirm.
+2. **ID mapping issue** — `GetBookInfo` returns an author ID in a format that `GetAuthorInfo` doesn't accept (e.g. different ID type, stale mapping).
+3. **Rate limiting / transient errors** — the author endpoint might be returning errors that get misinterpreted as "not found". Need to check the actual HTTP response.
+4. **60s polling deadline** — our timeout fix could be causing `PollAuthorUncached` to bail early and throw `BookInfoException("Failed to get works")`, which might be caught differently upstream and surface as `AuthorNotFoundException`.
+
+### Next Steps
+
+- [ ] Test the metadata API directly: `curl https://hardcover.bookinfo.pro/author/3050980` — does it return data or 404?
+- [ ] Add debug logging in `PollAuthorUncached` to capture the actual HTTP status and response for failing authors
+- [ ] Check if these same authors work when added manually via Bookshelf UI (not through import list)
+- [ ] Check if the polling deadline is causing premature failures vs actual 404s
